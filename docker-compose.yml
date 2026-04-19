@@ -1,0 +1,33 @@
+services:
+  aqua-main:
+    build:
+      context: .
+      dockerfile: Dockerfile.main
+    container_name: aqua-main
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:///./data/aqua.db
+      - NOTIFICATION_SERVICE_URL=http://aqua-notify:8001/notify
+    depends_on:
+      - aqua-notify
+    networks:
+      - aqua-net
+
+  aqua-notify:
+    build:
+      context: .
+      dockerfile: Dockerfile.notify
+    container_name: aqua-notify
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    networks:
+      - aqua-net
+
+networks:
+  aqua-net:
+    driver: bridge

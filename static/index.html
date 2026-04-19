@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AquaControl — Управление аквакультурой</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🌊 AquaControl</h1>
+            <p>Система мониторинга и управления аквакультурой</p>
+            <div class="last-update">Обновлено: <span id="lastUpdate">--:--:--</span></div>
+        </header>
+
+        <!-- Панель датчиков -->
+        <section class="card-grid">
+            <div class="card sensor-card" data-sensor="temperature">
+                <h3>🌡️ Температура</h3>
+                <div class="value" id="sensor-temperature">--</div>
+                <div class="unit">°C</div>
+            </div>
+            <div class="card sensor-card" data-sensor="ph">
+                <h3>🧪 pH</h3>
+                <div class="value" id="sensor-ph">--</div>
+                <div class="unit">pH</div>
+            </div>
+            <div class="card sensor-card" data-sensor="ammonia">
+                <h3>⚠️ Аммиак</h3>
+                <div class="value" id="sensor-ammonia">--</div>
+                <div class="unit">mg/L</div>
+            </div>
+            <div class="card sensor-card" data-sensor="oxygen">
+                <h3>💧 Кислород</h3>
+                <div class="value" id="sensor-oxygen">--</div>
+                <div class="unit">mg/L</div>
+            </div>
+            <div class="card sensor-card" data-sensor="turbidity">
+                <h3>🌀 Мутность</h3>
+                <div class="value" id="sensor-turbidity">--</div>
+                <div class="unit">NTU</div>
+            </div>
+        </section>
+
+        <!-- Панель управления -->
+        <section class="control-panel">
+            <div class="card">
+                <h3>🍽️ Кормление</h3>
+                <div class="control-group">
+                    <input type="number" id="feedPortion" value="5.0" step="0.5" min="0">
+                    <button id="feedBtn" class="btn primary">Выдать корм</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>🌡️ Целевая температура</h3>
+                <div class="control-group">
+                    <input type="range" id="tempSlider" min="18" max="32" step="0.5" value="26">
+                    <span id="tempValue" class="value-display">26.0 °C</span>
+                    <button id="setTempBtn" class="btn secondary">Установить</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>💡 Режим освещения</h3>
+                <div class="control-group">
+                    <select id="lightModeSelect">
+                        <option value="Day">День</option>
+                        <option value="Night">Ночь</option>
+                        <option value="Auto">Авто</option>
+                    </select>
+                    <button id="setLightBtn" class="btn secondary">Применить</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Список устройств -->
+        <section>
+            <h2>🛠️ Устройства</h2>
+            <div class="table-wrapper">
+                <table id="devicesTable">
+                    <thead>
+                        <tr><th>ID</th><th>Название</th><th>Тип</th><th>Статус</th><th>Мощность</th><th>Действия</th></tr>
+                    </thead>
+                    <tbody id="devicesTbody"></tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- События -->
+        <section>
+            <h2>📋 Последние события</h2>
+            <div class="table-wrapper">
+                <table id="eventsTable">
+                    <thead><tr><th>Время</th><th>Тип</th><th>Источник</th><th>Описание</th></tr></thead>
+                    <tbody id="eventsTbody"></tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
