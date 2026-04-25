@@ -1,4 +1,4 @@
-name: Two-stage CI/CD
+name: AquaControl CI/CD (2-stage)
 
 on:
   push:
@@ -7,63 +7,119 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository_owner }}/aquacontrol
+
 jobs:
-  # ──────────────────────────────────────────────────────────
-  # JOB 1: CI – компиляция бинарника в изолированном контейнере
-  # ──────────────────────────────────────────────────────────
+  # ═════════════════════════════════════════════════════
+  # JOB 1: CI → КОМПИЛЯЦИЯ БИНАРНИКОВ (PyInstaller)
+  # ═════════════════════════════════════════════════════
   compile:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout исходники микросервиса
+      - name: Checkout исходников
         uses: actions/checkout@v4
+
+      - name: Компиляция в Python-контейнере
+        uses: docker://python:3.11-slim
         with:
-          repository: your-org/microservice-repo
-          token: ${{ secrets.GH_PAT }}
-      
-      - name: Компиляция в Golang-контейнере (пример)
-        uses: docker://golang:1.21
-        with:
-          args: go build -o aqua-service ./cmd/service
-      
-      - name: Загрузить бинарник как артефакт
+          args: >
+            sh -c "
+            pip install pyinstaller fastapi uvicorn sqlalchemy aiosqlite pydantic-settings httpx python-multipart &&
+            pyinstaller --onefile --name aqua-main main.py &&
+            pyinstaller --onefile --name aqua-notify notification_service.py
+            "
+
+      - name: Загрузить артефакты (бинарники)
         uses: actions/upload-artifact@v4
         with:
-          name: aqua-binary
-          path: aqua-service
+          name: binaries
+          path: dist/
+          retention-days: 1
 
-  # ──────────────────────────────────────────────────────────
-  # JOB 2: CD – сборка образа с бинарником + конфиги из другого репозитория
-  # ──────────────────────────────────────────────────────────
-  package:
+  # ═════════════════════════════════════════════════════
+  # JOB 2: CD → СБОРКА DOCKER ОБРАЗОВ
+  # ═════════════════════════════════════════════════════
+  build:
     needs: compile
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       packages: write
+
     steps:
-      - name: Checkout репозиторий с Dockerfile и конфигами
+      - name: Checkout репозитория (для Dockerfile и статики)
         uses: actions/checkout@v4
-        with:
-          repository: your-org/aquacontrol-deploy
-          token: ${{ secrets.GH_PAT }}
-      
-      - name: Скачать бинарник из CI
+
+      - name: Скачать бинарники
         uses: actions/download-artifact@v4
         with:
-          name: aqua-binary
+          name: binaries
           path: ./bin
-      
-      - name: Сборка Docker-образа
+
+      - name: Сделать бинарники исполняемыми
+        run: chmod +x ./bin/*
+
+      - name: Определить версию
+        id: version
         run: |
-          docker build -t ghcr.io/your-org/aquacontrol:latest -f Dockerfile .
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          docker push ghcr.io/your-org/aquacontrol:latest
-      
-      # опционально: деплой на сервер
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/v}
+          else
+            VERSION=$(echo ${{ github.sha }} | cut -c1-7)
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Логин в GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Сборка образа main
+      - name: Сборка aqua-main
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.main
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-main:${{ steps.version.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-main:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Сборка образа notify
+      - name: Сборка aqua-notify
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.notify
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-notify:${{ steps.version.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-notify:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ═════════════════════════════════════════════════════
+  # JOB 3: ДЕПЛОЙ (опционально, для main ветки)
+  # ═════════════════════════════════════════════════════
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
       - name: Деплой через SSH
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
             cd /opt/aquacontrol
-            docker-compose pull && docker-compose up -d
+            docker-compose pull
+            docker-compose up -d
