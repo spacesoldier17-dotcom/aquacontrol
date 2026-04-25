@@ -13,7 +13,7 @@ env:
 
 jobs:
   # ═════════════════════════════════════════════════════
-  # JOB 1: CI → КОМПИЛЯЦИЯ БИНАРНИКОВ (PyInstaller)
+  # JOB 1: CI – КОМПИЛЯЦИЯ БИНАРНИКОВ (PyInstaller)
   # ═════════════════════════════════════════════════════
   compile:
     runs-on: ubuntu-latest
@@ -26,6 +26,8 @@ jobs:
         with:
           args: >
             sh -c "
+            apt-get update &&
+            apt-get install -y binutils &&
             pip install pyinstaller fastapi uvicorn sqlalchemy aiosqlite pydantic-settings httpx python-multipart &&
             pyinstaller --onefile --name aqua-main main.py &&
             pyinstaller --onefile --name aqua-notify notification_service.py
@@ -39,7 +41,7 @@ jobs:
           retention-days: 1
 
   # ═════════════════════════════════════════════════════
-  # JOB 2: CD → СБОРКА DOCKER ОБРАЗОВ
+  # JOB 2: CD – СБОРКА DOCKER ОБРАЗОВ
   # ═════════════════════════════════════════════════════
   build:
     needs: compile
