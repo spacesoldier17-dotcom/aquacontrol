@@ -1,100 +1,130 @@
-name: AquaControl CI/CD (2-stage)
+# ═══════════════════════════════════════════════════════
+# НАЗВАНИЕ WORKFLOW
+# ═══════════════════════════════════════════════════════
+name: AquaControl CI/CD
 
+# ═══════════════════════════════════════════════════════
+# КОГДА ЗАПУСКАТЬ
+# ═══════════════════════════════════════════════════════
 on:
+  # При пуше в ветки main или develop
   push:
     branches: [main, develop]
+    # При создании тега вида v1.0.0
     tags: ['v*']
+  # При создании Pull Request в main
   pull_request:
     branches: [main]
 
+# ═══════════════════════════════════════════════════════
+# ПЕРЕМЕННЫЕ (доступны во всех job)
+# ═══════════════════════════════════════════════════════
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository_owner }}/aquacontrol
 
+# ═══════════════════════════════════════════════════════
+# JOBS (задачи, выполняются параллельно или последовательно)
+# ═══════════════════════════════════════════════════════
 jobs:
   # ═════════════════════════════════════════════════════
-  # JOB 1: CI – КОМПИЛЯЦИЯ БИНАРНИКОВ (PyInstaller)
+  # JOB 1: ТЕСТИРОВАНИЕ
   # ═════════════════════════════════════════════════════
-  compile:
+  test:
+    # На какой машине выполнять (виртуальная машина Ubuntu)
     runs-on: ubuntu-latest
+    
     steps:
-      - name: Checkout исходников
+      # Шаг 1.1: Скачать код из репозитория
+      - name: Скачать код
         uses: actions/checkout@v4
-
-      - name: Компиляция в Python-контейнере
-        uses: docker://python:3.11-slim
+      
+      # Шаг 1.2: Установить Python 3.11
+      - name:  Установить Python
+        uses: actions/setup-python@v5
         with:
-          args: >
-            sh -c "
-            apt-get update &&
-            apt-get install -y binutils &&
-            pip install pyinstaller fastapi uvicorn sqlalchemy aiosqlite pydantic-settings httpx python-multipart &&
-            pyinstaller --onefile --name aqua-main main.py &&
-            pyinstaller --onefile --name aqua-notify notification_service.py
-            "
-
-      - name: Загрузить артефакты (бинарники)
-        uses: actions/upload-artifact@v4
-        with:
-          name: binaries
-          path: dist/
-          retention-days: 1
+          python-version: '3.11'
+      
+      # Шаг 1.3: Установить зависимости
+      - name:  Установить зависимости
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+      
+      # Шаг 1.4: Проверить синтаксис Python файлов
+      - name:  Проверка синтаксиса
+        run: |
+          python -m py_compile main.py
+          python -m py_compile notification_service.py
+          python -m py_compile tasks.py
 
   # ═════════════════════════════════════════════════════
-  # JOB 2: CD – СБОРКА DOCKER ОБРАЗОВ (без экспорта кэша)
+  # JOB 2: СБОРКА И ПУШ DOCKER ОБРАЗОВ
   # ═════════════════════════════════════════════════════
   build:
-    needs: compile
+    # Зависит от job test (выполнится только если test успешен)
+    needs: test
+    
+    # Не запускать для Pull Request (только для пушей)
     if: github.event_name != 'pull_request'
+    
     runs-on: ubuntu-latest
+    
+    # Права для работы с GitHub Packages
     permissions:
       contents: read
       packages: write
-
+    
     steps:
-      - name: Checkout репозитория (для Dockerfile и статики)
+      # Шаг 2.1: Скачать код
+      - name:  Скачать код
         uses: actions/checkout@v4
-
-      - name: Скачать бинарники
-        uses: actions/download-artifact@v4
-        with:
-          name: binaries
-          path: ./bin
-
-      - name: Сделать бинарники исполняемыми
-        run: chmod +x ./bin/*
-
-      - name: Определить версию
-        id: version
-        run: |
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            VERSION=${GITHUB_REF#refs/tags/v}
-          else
-            VERSION=$(echo ${{ github.sha }} | cut -c1-7)
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Логин в GHCR
+      
+      # Шаг 2.2: Установить Docker Buildx (улучшенная сборка)
+      - name:  Установить Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      # Шаг 2.3: Войти в GitHub Container Registry
+      - name: Логин в GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      # Сборка образа main (cache-to удалён)
+      
+      # Шаг 2.4: Определить версию сборки
+      - name:  Определить версию
+        id: version
+        run: |
+          # Если это тег (v1.0.0), используем его как версию
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/v}
+          else
+            # Иначе используем первые 7 символов SHA коммита
+            VERSION=$(echo ${{ github.sha }} | cut -c1-7)
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Собираем версию: $VERSION"
+      
+      # Шаг 2.5: Собрать и запушить aqua-main
       - name: Сборка aqua-main
         uses: docker/build-push-action@v5
         with:
+          # Контекст сборки (текущая папка)
           context: .
+          # Путь к Dockerfile
           file: ./Dockerfile.main
+          # Пушить образ в Registry
           push: true
+          # Теги (метки) образа
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-main:${{ steps.version.outputs.version }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-main:latest
+          # Кэширование для ускорения
           cache-from: type=gha
-          # cache-to: удалено
-
-      # Сборка образа notify (cache-to удалён)
+          cache-to: type=gha,mode=max
+      
+      # Шаг 2.6: Собрать и запушить aqua-notify
       - name: Сборка aqua-notify
         uses: docker/build-push-action@v5
         with:
@@ -105,23 +135,54 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-notify:${{ steps.version.outputs.version }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-notify:latest
           cache-from: type=gha
-          # cache-to: удалено
+          cache-to: type=gha,mode=max
+      
+      # Шаг 2.7: Сохранить версию для следующих job
+      - name: Сохранить версию
+        run: echo "${{ steps.version.outputs.version }}" > version.txt
+      
+      - name:  Загрузить артефакт версии
+        uses: actions/upload-artifact@v4
+        with:
+          name: version
+          path: version.txt
 
   # ═════════════════════════════════════════════════════
-  # JOB 3: ДЕПЛОЙ (опционально, для main ветки)
+  # JOB 3: ДЕПЛОЙ НА СЕРВЕР (опционально)
   # ═════════════════════════════════════════════════════
   deploy:
+    # Зависит от build
     needs: build
+    
+    # Только для ветки main
     if: github.ref == 'refs/heads/main'
+    
     runs-on: ubuntu-latest
+    
     steps:
-      - name: Деплой через SSH
-        uses: appleboy/ssh-action@v1.0.0
+      # Шаг 3.1: Скачать файл с версией
+      - name: Скачать версию
+        uses: actions/download-artifact@v4
         with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          script: |
-            cd /opt/aquacontrol
-            docker-compose pull
-            docker-compose up -d
+          name: version
+      
+      # Шаг 3.2: Прочитать версию
+      - name: Прочитать версию
+        id: get_version
+        run: |
+          VERSION=$(cat version.txt)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Будет задеплоена версия: $VERSION"
+      
+      # Шаг 3.3: Деплой (пример через SSH)
+      # Раскомментируй и настрой, если есть сервер
+      # - name: 🚀 Деплой на сервер
+      #   uses: appleboy/ssh-action@v1.0.0
+      #   with:
+      #     host: ${{ secrets.SERVER_HOST }}
+      #     username: ${{ secrets.SERVER_USER }}
+      #     key: ${{ secrets.SERVER_SSH_KEY }}
+      #     script: |
+      #       cd /opt/aquacontrol
+      #       docker-compose pull
+      #       docker-compose up -d
