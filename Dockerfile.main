@@ -1,11 +1,25 @@
-FROM alpine:latest
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -u 1000 appuser
 
 WORKDIR /app
 
-# Копируем собранный бинарник и статические файлы
-COPY ./bin/aqua-main /app/aqua-main
-COPY ./static /app/static
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY *.py ./
+COPY routers ./routers
+COPY static ./static
+
+# При необходимости скопируйте .env (если не передаётся через переменные окружения)
+# COPY .env .env
+
+USER appuser
 
 EXPOSE 8000
 
-CMD ["/app/aqua-main"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
